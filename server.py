@@ -249,6 +249,16 @@ def load_data():
         return {}
 
 
+def clean_due(v):
+    """A task's reminder as local time, YYYY-MM-DDTHH:MM, or "" when there is none."""
+    try:
+        v = str(v or "")
+        datetime.strptime(v, "%Y-%m-%dT%H:%M")
+        return v
+    except ValueError:
+        return ""
+
+
 def clean_data(d):
     """Keep only the expected shape so a bad client can't write arbitrary blobs."""
     if not isinstance(d, dict):
@@ -261,7 +271,7 @@ def clean_data(d):
     ]
     todos = [
         {"id": s(t.get("id"), 40), "text": s(t.get("text"), 500), "done": bool(t.get("done")),
-         "created": int(t.get("created") or 0)}
+         "created": int(t.get("created") or 0), "due": clean_due(t.get("due")), "notified": False}
         for t in d.get("todos", [])[:500]
         if isinstance(t, dict) and str(t.get("text", "")).strip()
     ]
@@ -273,6 +283,72 @@ def save_data(d):
     with open(tmp, "w", encoding="utf-8") as f:
         json.dump(d, f, ensure_ascii=False, indent=1)
     os.replace(tmp, DATA_FILE)
+
+
+def keep_notified(new, old):
+    """`notified` belongs to the agent: a page holding older data can't re-arm a reminder,
+    while moving a task to a new date does."""
+    sent = {(t.get("id"), t.get("due")) for t in old.get("todos", []) if isinstance(t, dict) and t.get("notified")}
+    for t in new["todos"]:
+        t["notified"] = bool(t["due"]) and (t["id"], t["due"]) in sent
+
+
+# ---------- Task reminders ----------
+# The agent's own window rather than a Windows notification: those are dropped silently
+# (while reporting success) when notifications are off or Do Not Disturb is on.
+def show_popup(title, body, slot):
+    """Shows reminder_popup.py; True once it is up and waiting for its click."""
+    exe = os.path.join(os.path.dirname(sys.executable), "pythonw.exe")
+    script = os.path.join(os.path.dirname(os.path.abspath(__file__)), "reminder_popup.py")
+    try:
+        p = subprocess.Popen([exe, script, title, body, str(slot)], creationflags=NO_WINDOW)
+        code = p.wait(timeout=2)  # it stays open until clicked, so exiting this soon means it failed
+        agent_log(f"reminder window failed with code {code}")
+        return False
+    except subprocess.TimeoutExpired:
+        agent_log("reminder shown")
+        return True
+    except OSError as e:
+        agent_log(f"reminder window failed: {e}")
+        return False
+
+
+def due_todos(d, now):
+    out = []
+    for t in d.get("todos", []):
+        due = clean_due(t.get("due")) if isinstance(t, dict) else ""
+        if due and not t.get("done") and not t.get("notified") and datetime.strptime(due, "%Y-%m-%dT%H:%M") <= now:
+            out.append(t)
+    return out
+
+
+def check_reminders():
+    with data_lock:
+        due = due_todos(load_data(), datetime.now())
+    if not due:
+        return
+    if len(due) > 3:  # after a long time off: one summary, not a pile of pop-ups
+        ok = show_popup(f"{len(due)} tasks due", " · ".join(t["text"] for t in due)[:200], 0)
+    else:
+        ok = all([show_popup("Task due", t["text"], i) for i, t in enumerate(due)])
+    if not ok:
+        return  # marked only once shown: the next pass tries again
+    sent = {(t["id"], t["due"]) for t in due}
+    with data_lock:
+        d = load_data()
+        for t in d.get("todos", []):
+            if isinstance(t, dict) and (t.get("id"), t.get("due")) in sent:
+                t["notified"] = True
+        save_data(d)
+
+
+def reminder_loop():
+    while True:
+        try:
+            check_reminders()
+        except Exception as e:
+            agent_log(f"reminder check failed: {e!r}")
+        time.sleep(20)
 
 
 def cpu_name():
@@ -890,6 +966,7 @@ class Handler(SimpleHTTPRequestHandler):
         except (ValueError, TypeError, AttributeError):
             return self.send_error(400)
         with data_lock:
+            keep_notified(d, load_data())
             save_data(d)
         return self._json(200, {"ok": True})
 
@@ -954,6 +1031,7 @@ def run_agent():
     try:
         threading.Thread(target=sample_loop, daemon=True, name="stats").start()
         threading.Thread(target=media_poll, daemon=True, name="media").start()
+        threading.Thread(target=reminder_loop, daemon=True, name="reminders").start()
         while True:
             try:
                 server = ThreadingHTTPServer(("127.0.0.1", PORT), Handler)

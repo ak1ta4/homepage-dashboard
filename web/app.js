@@ -414,6 +414,23 @@
       $('np-bar').style.width = '0';
     }
   };
+  // Duration bar on/off: a per-browser display preference, like the recent searches.
+  const NP_BAR_KEY = 'home-np-bar';
+  const setNpBar = show => {
+    document.querySelector('.a-np').classList.toggle('no-progress', !show);
+    const b = $('np-bar-toggle');
+    b.setAttribute('aria-pressed', show);
+    b.setAttribute('aria-label', show ? 'Ocultar barra de duración' : 'Mostrar barra de duración');
+    $('ico-bar-on').toggleAttribute('hidden', !show); // SVG: attribute, not .hidden
+    $('ico-bar-off').toggleAttribute('hidden', show);
+  };
+  try { setNpBar(localStorage.getItem(NP_BAR_KEY) !== 'off'); } catch { setNpBar(true); }
+  $('np-bar-toggle').addEventListener('click', () => {
+    const show = document.querySelector('.a-np').classList.contains('no-progress');
+    setNpBar(show);
+    try { localStorage.setItem(NP_BAR_KEY, show ? 'on' : 'off'); } catch {}
+  });
+
   document.querySelectorAll('[data-media]').forEach(b => b.addEventListener('click', async () => {
     if (DEMO) { if (b.dataset.media === 'toggle') demo.playing = !demo.playing; else demo.pos = 0; poll(); return; }
     try {
@@ -589,8 +606,9 @@
     bookmarks: [['YouTube', 'https://www.youtube.com/'], ['GitHub', 'https://github.com/'], ['Gmail', 'https://mail.google.com/'],
       ['Reddit', 'https://www.reddit.com/'], ['Wikipedia', 'https://www.wikipedia.org/'], ['Figma', 'https://www.figma.com/'],
       ['Spotify', 'https://open.spotify.com/'], ['Notion', 'https://www.notion.so/']].map(([name, url]) => ({ id: uid(), name, url })),
-    todos: [['Review pull requests', false], ['Buy coffee beans', false], ['Book dentist appointment', false], ['Water the plants', true]]
-      .map(([text, done], i) => ({ id: uid(), text, done, created: i })),
+    todos: [['Review pull requests', false, '2026-03-31T17:30'], ['Buy coffee beans', false, ''],
+      ['Book dentist appointment', false, '2026-04-02T10:00'], ['Water the plants', true, '']]
+      .map(([text, done, due], i) => ({ id: uid(), text, done, created: i, due })),
   });
   const loadData = async () => {
     if (DEMO) {
@@ -635,6 +653,52 @@
 
   // Tasks
   const ICON_EDIT = '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M10.5 3.5l2 2L6 12H4v-2zM9 5l2 2"/></svg>';
+  const ICON_DUE = '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M3 4h10v9H3zM3 7h10M6 2v3M10 2v3"/></svg>';
+  const nowDate = () => (DEMO ? new Date(2026, 2, 31, 9, 41) : new Date());
+  const dayStart = d => new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
+  const toDue = d => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+  const dueDay = d => {
+    const diff = Math.round((dayStart(d) - dayStart(nowDate())) / 864e5);
+    if (diff === 0) return 'Today';
+    if (diff === 1) return 'Tomorrow';
+    if (diff === -1) return 'Yesterday';
+    const year = d.getFullYear() === nowDate().getFullYear() ? '' : ` ${d.getFullYear()}`;
+    return `${pad(d.getDate())} ${MON[d.getMonth()]}${year}`;
+  };
+  const dueLabel = due => { const d = new Date(due); return `${dueDay(d)} ${pad(d.getHours())}:${pad(d.getMinutes())}`; };
+  const paintDue = (chip, t) => {
+    chip.textContent = dueLabel(t.due);
+    chip.classList.toggle('overdue', !t.done && new Date(t.due) <= nowDate());
+  };
+  // The date picker works with the mouse alone: the wallpaper has no native pop-ups.
+  let dueEdit = null; // { id, draft: Date }
+  const duePicker = () => {
+    const li = el('li', 'due-picker');
+    const d = dueEdit.draft;
+    const step = (label, act, text) => {
+      const b = el('button', 'due-step', text);
+      b.type = 'button';
+      b.dataset.due = act;
+      b.setAttribute('aria-label', label);
+      return b;
+    };
+    const row = cls => el('div', cls);
+    const wheelVal = (text, unit, cls = '') => { const v = el('span', 'due-val' + cls, text); v.dataset.wheel = unit; return v; };
+    const date = row('due-row');
+    date.append(step('Día anterior', 'day:-1', '‹'), wheelVal(dueDay(d), 'day', ' due-date'), step('Día siguiente', 'day:1', '›'));
+    const time = row('due-row');
+    time.append(step('Hora anterior', 'hour:-1', '‹'), wheelVal(pad(d.getHours()), 'hour'), step('Hora siguiente', 'hour:1', '›'),
+      el('span', 'due-sep', ':'), step('Minuto anterior', 'min:-1', '‹'), wheelVal(pad(d.getMinutes()), 'min'), step('Minuto siguiente', 'min:1', '›'));
+    const quick = row('due-row due-actions');
+    const action = (text, act) => { const b = step(text, act, text); b.className = 'txt-btn'; return b; };
+    quick.append(action('Today', 'today'), action('Tomorrow', 'tomorrow'), el('span', 'due-gap'));
+    if (data.todos.find(t => t.id === dueEdit.id)?.due) quick.append(action('Remove', 'clear'));
+    const save = action('Save', 'save');
+    save.classList.add('strong');
+    quick.append(action('Cancel', 'cancel'), save);
+    li.append(date, time, quick);
+    return li;
+  };
   const renderTodos = () => {
     const list = $('todo-list');
     list.textContent = '';
@@ -647,13 +711,35 @@
       chk.setAttribute('aria-checked', t.done);
       chk.setAttribute('aria-label', t.text);
       chk.dataset.act = 'toggle';
+      const body = el('div', 'task-body');
       const txt = el('span', 'task-text', t.text);
+      body.append(txt);
+      if (t.due) {
+        const chip = el('button', 'task-due');
+        chip.dataset.act = 'due';
+        chip.setAttribute('aria-label', 'Cambiar fecha');
+        paintDue(chip, t);
+        body.append(chip);
+      }
+      const grip = el('span', 'grip');
+      grip.setAttribute('aria-hidden', 'true');
+      const dueBtn = el('button', 'x edit');
+      dueBtn.innerHTML = ICON_DUE;
+      dueBtn.setAttribute('aria-label', 'Añadir fecha y aviso');
+      dueBtn.dataset.act = 'due';
       const edit = el('button', 'x edit');
       edit.innerHTML = ICON_EDIT;
       edit.setAttribute('aria-label', 'Editar tarea');
       edit.dataset.act = 'edit';
-      li.append(chk, txt, edit, delBtn('x', 'Borrar tarea'));
+      const actions = el('div', 'task-actions');
+      actions.append(grip, dueBtn, edit, delBtn('x', 'Borrar tarea'));
+      li.append(chk, body, actions);
       list.append(li);
+      if (dueEdit && dueEdit.id === t.id) {
+        const picker = duePicker();
+        list.append(picker);
+        picker.scrollIntoView({ block: 'nearest' }); // short screens: keep Save reachable
+      }
     }
     const total = data.todos.length, done = data.todos.filter(t => t.done).length;
     setText('todo-count', `${done}/${total}`);
@@ -745,11 +831,57 @@
     });
     inp.addEventListener('blur', () => finish(true));
   };
+  const dueAction = act => {
+    const t = data.todos.find(x => x.id === dueEdit.id);
+    const d = dueEdit.draft;
+    const [kind, n] = act.split(':');
+    if (kind === 'day') d.setDate(d.getDate() + +n);
+    else if (kind === 'hour') d.setHours(d.getHours() + +n);
+    else if (kind === 'min') d.setMinutes(d.getMinutes() + +n);
+    else if (kind === 'today' || kind === 'tomorrow') {
+      const base = nowDate();
+      d.setFullYear(base.getFullYear(), base.getMonth(), base.getDate() + (kind === 'tomorrow' ? 1 : 0));
+    } else {
+      if (t && kind === 'save') { t.due = toDue(d); save(); }
+      if (t && kind === 'clear') { t.due = ''; save(); }
+      dueEdit = null;
+    }
+    renderTodos();
+  };
+  document.addEventListener('keydown', e => {
+    if (e.key === 'Escape' && dueEdit) { dueEdit = null; renderTodos(); }
+  });
+  // Mouse wheel over the day, hour or minutes: much quicker than clicking the arrows.
+  $('todo-list').addEventListener('wheel', e => {
+    const v = e.target.closest('[data-wheel]');
+    if (!v || !dueEdit) return;
+    e.preventDefault();
+    dueAction(`${v.dataset.wheel}:${e.deltaY < 0 ? 1 : -1}`);
+  }, { passive: false });
+  setInterval(() => {
+    document.querySelectorAll('#todo-list .task-due').forEach(chip => {
+      const t = findTodo(chip);
+      if (t && t.due) paintDue(chip, t);
+    });
+  }, 30000);
   $('todo-list').addEventListener('click', e => {
+    if (sortTodos.justDragged()) return;
+    const step = e.target.closest('[data-due]');
+    if (step) { dueAction(step.dataset.due); return; }
     const b = e.target.closest('[data-act]');
     if (!b) return;
     const t = findTodo(b);
     if (!t) return;
+    if (b.dataset.act === 'due') {
+      if (dueEdit && dueEdit.id === t.id) dueEdit = null;
+      else {
+        const draft = t.due ? new Date(t.due) : new Date(nowDate().getTime() + 864e5);
+        if (!t.due) draft.setHours(9, 0, 0, 0);
+        dueEdit = { id: t.id, draft };
+      }
+      renderTodos();
+      return;
+    }
     if (b.dataset.act === 'edit') { startEdit(b.closest('li').querySelector('.task-text')); return; }
     if (b.dataset.act === 'toggle') t.done = !t.done;
     else data.todos = data.todos.filter(x => x !== t);
@@ -830,84 +962,91 @@
     const m = e.target.closest('.bm');
     if (m && e.button === 1) { e.preventDefault(); openMark(m.dataset.url, true); }
   });
-  // Reorder: Alt+↑/↓ on a focused bookmark.
-  const moveMark = (id, delta) => {
-    const i = data.bookmarks.findIndex(b => b.id === id), j = i + delta;
-    if (i < 0 || j < 0 || j >= data.bookmarks.length) return;
-    const list = data.bookmarks.slice();
-    [list[i], list[j]] = [list[j], list[i]];
-    data.bookmarks = list;
-    save(); renderMarks();
-    $('bm-list').querySelector(`li[data-id="${id}"] .bm`)?.focus();
-  };
   $('bm-list').addEventListener('keydown', e => {
     const m = e.target.closest('.bm');
-    if (!m) return;
-    if (e.key === 'Enter') openMark(m.dataset.url, e.ctrlKey || e.metaKey);
-    else if (e.altKey && (e.key === 'ArrowUp' || e.key === 'ArrowDown')) {
-      e.preventDefault();
-      moveMark(m.closest('li').dataset.id, e.key === 'ArrowUp' ? -1 : 1);
-    }
+    if (m && e.key === 'Enter') openMark(m.dataset.url, e.ctrlKey || e.metaKey);
   });
 
-  // Reorder: drag with the mouse. A 6px threshold keeps plain clicks as clicks;
-  // an orange marker shows where the bookmark will land.
-  const bmList = $('bm-list');
-  let drag = null, suppressClick = false;
-  const endDrag = commit => {
-    const d = drag;
-    drag = null;
-    if (!d || !d.active) return;
-    suppressClick = true;
-    setTimeout(() => { suppressClick = false; }, 0);
-    bmList.classList.remove('is-dragging');
-    d.li.classList.remove('dragging');
-    if (commit && d.marker.parentNode) {
-      bmList.insertBefore(d.li, d.marker);
-      const order = [...bmList.querySelectorAll('li[data-id]')].map(li => li.dataset.id);
-      const byId = new Map(data.bookmarks.map(b => [b.id, b]));
-      const next = order.map(id => byId.get(id)).filter(Boolean);
-      if (next.length === data.bookmarks.length && next.some((b, i) => b !== data.bookmarks[i])) {
-        data.bookmarks = next;
-        save();
-      }
-    }
-    d.marker.remove();
-    renderMarks();
-  };
-  bmList.addEventListener('pointerdown', e => {
-    if (e.button !== 0 || e.target.closest('[data-act="del"]')) return;
-    const li = e.target.closest('li[data-id]');
-    if (li) drag = { li, startY: e.clientY, pointerId: e.pointerId, active: false };
-  });
-  bmList.addEventListener('pointermove', e => {
-    if (!drag) return;
-    if (!drag.active) {
-      if (Math.abs(e.clientY - drag.startY) < 6) return;
-      drag.active = true;
-      drag.marker = el('li', 'drop-marker');
-      drag.marker.setAttribute('aria-hidden', 'true');
-      bmList.setPointerCapture(drag.pointerId);
-      bmList.classList.add('is-dragging');
-      drag.li.classList.add('dragging');
-    }
-    e.preventDefault();
-    const box = bmList.getBoundingClientRect();
-    if (e.clientY < box.top + 28) bmList.scrollTop -= 8;
-    else if (e.clientY > box.bottom - 28) bmList.scrollTop += 8;
-    const before = [...bmList.querySelectorAll('li[data-id]')].find(li => {
-      const r = li.getBoundingClientRect();
-      return e.clientY < r.top + r.height / 2;
+  // Reorder bookmarks and tasks: drag with the mouse or Alt+↑/↓ on a focused row.
+  // A 6px threshold keeps plain clicks as clicks; an orange marker shows the landing spot.
+  const makeSortable = (list, key, render, focusSel) => {
+    let drag = null, suppressClick = false;
+    list.classList.add('sortable');
+    const move = (id, delta) => {
+      const i = data[key].findIndex(x => x.id === id), j = i + delta;
+      if (i < 0 || j < 0 || j >= data[key].length) return;
+      const items = data[key].slice();
+      [items[i], items[j]] = [items[j], items[i]];
+      data[key] = items;
+      save(); render();
+      list.querySelector(`li[data-id="${id}"] ${focusSel}`)?.focus();
+    };
+    list.addEventListener('keydown', e => {
+      if (!e.altKey || (e.key !== 'ArrowUp' && e.key !== 'ArrowDown') || e.target.matches('input')) return;
+      const li = e.target.closest('li[data-id]');
+      if (!li) return;
+      e.preventDefault();
+      move(li.dataset.id, e.key === 'ArrowUp' ? -1 : 1);
     });
-    if (before) { if (drag.marker.nextSibling !== before) bmList.insertBefore(drag.marker, before); }
-    else if (bmList.lastChild !== drag.marker) bmList.append(drag.marker);
-  });
-  bmList.addEventListener('pointerup', () => endDrag(true));
-  bmList.addEventListener('pointercancel', () => endDrag(false));
-  document.addEventListener('keydown', e => { if (drag && drag.active && e.key === 'Escape') endDrag(false); }, true);
+    const endDrag = commit => {
+      const d = drag;
+      drag = null;
+      if (!d || !d.active) return;
+      suppressClick = true;
+      setTimeout(() => { suppressClick = false; }, 0);
+      list.classList.remove('is-dragging');
+      d.li.classList.remove('dragging');
+      if (commit && d.marker.parentNode) {
+        list.insertBefore(d.li, d.marker);
+        const order = [...list.querySelectorAll('li[data-id]')].map(li => li.dataset.id);
+        const byId = new Map(data[key].map(x => [x.id, x]));
+        const next = order.map(id => byId.get(id)).filter(Boolean);
+        if (next.length === data[key].length && next.some((x, i) => x !== data[key][i])) {
+          data[key] = next;
+          save();
+        }
+      }
+      d.marker.remove();
+      render();
+    };
+    list.addEventListener('pointerdown', e => {
+      if (e.button !== 0 || e.target.closest('button, input')) return;
+      const li = e.target.closest('li[data-id]');
+      if (li) drag = { li, startY: e.clientY, pointerId: e.pointerId, active: false };
+    });
+    list.addEventListener('pointermove', e => {
+      if (!drag) return;
+      if (!drag.active) {
+        if (Math.abs(e.clientY - drag.startY) < 6) return;
+        drag.active = true;
+        drag.marker = el('li', 'drop-marker');
+        drag.marker.setAttribute('aria-hidden', 'true');
+        list.setPointerCapture(drag.pointerId);
+        list.classList.add('is-dragging');
+        drag.li.classList.add('dragging');
+      }
+      e.preventDefault();
+      const box = list.getBoundingClientRect();
+      if (e.clientY < box.top + 28) list.scrollTop -= 8;
+      else if (e.clientY > box.bottom - 28) list.scrollTop += 8;
+      const before = [...list.querySelectorAll('li[data-id]')].find(li => {
+        const r = li.getBoundingClientRect();
+        return e.clientY < r.top + r.height / 2;
+      });
+      if (before) { if (drag.marker.nextSibling !== before) list.insertBefore(drag.marker, before); }
+      else if (list.lastChild !== drag.marker) list.append(drag.marker);
+    });
+    list.addEventListener('pointerup', () => endDrag(true));
+    list.addEventListener('pointercancel', () => endDrag(false));
+    document.addEventListener('keydown', e => { if (drag && drag.active && e.key === 'Escape') endDrag(false); }, true);
+    return { justDragged: () => suppressClick };
+  };
+  const bmList = $('bm-list');
+  const sortMarks = makeSortable(bmList, 'bookmarks', renderMarks, '.bm');
+  const sortTodos = makeSortable($('todo-list'), 'todos', renderTodos, '.chk');
 
   bmList.addEventListener('click', e => {
-    if (suppressClick) return;
+    if (sortMarks.justDragged()) return;
     const m = e.target.closest('.bm');
     if (m) { openMark(m.dataset.url, e.ctrlKey || e.metaKey || e.shiftKey); return; }
     const b = e.target.closest('[data-act="del"]');
@@ -917,16 +1056,18 @@
     save(); renderMarks();
   });
 
+  const listsBusy = () => pendingSync || dueEdit || document.querySelector('.task-edit, .is-dragging');
+
   // Another tab (or the extension) may have changed things → refresh when we come back.
   document.addEventListener('visibilitychange', () => {
-    if (document.visibilityState === 'visible' && !pendingSync && !document.querySelector('.task-edit')) loadData();
+    if (document.visibilityState === 'visible' && !listsBusy()) loadData();
   });
 
   // ---------- Loops ----------
   loadData();
   if (!WALLPAPER) q.focus(); // after everything above exists (focus may trigger autocomplete)
   // The wallpaper never becomes "visible again", so pick up browser edits periodically.
-  if (WALLPAPER) setInterval(() => { if (!pendingSync && !document.querySelector('.task-edit')) loadData(); }, 10000);
+  if (WALLPAPER) setInterval(() => { if (!listsBusy()) loadData(); }, 10000);
 
   // Switching tabs / windows: leaving releases the search box (no caret left
   // blinking, no highlighted card); coming back puts the caret straight in it —

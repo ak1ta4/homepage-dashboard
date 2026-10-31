@@ -63,6 +63,10 @@
     <div class="np-head">
       <div class="label" id="np-label">Now playing</div>
       <div class="ctrls">
+        <button class="ctl np-bar-toggle" id="np-bar-toggle" aria-pressed="true" aria-label="Ocultar barra de duración">
+          <svg viewBox="0 0 16 16" aria-hidden="true" id="ico-bar-on"><path d="M2 8h12"/><circle cx="6" cy="8" r="1.8"/></svg>
+          <svg viewBox="0 0 16 16" aria-hidden="true" id="ico-bar-off" hidden><path d="M2 8h12M4 13l8-10"/></svg>
+        </button>
         <button class="ctl" data-media="prev" aria-label="Anterior"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M4 3v10M13 3 6 8l7 5z"/></svg></button>
         <button class="ctl" data-media="toggle" aria-label="Reproducir o pausar" id="ctl-toggle"><svg viewBox="0 0 16 16" aria-hidden="true" id="ico-play"><path d="M5 3l8 5-8 5z"/></svg><svg viewBox="0 0 16 16" aria-hidden="true" id="ico-pause" hidden><path d="M5 3v10M11 3v10"/></svg></button>
         <button class="ctl" data-media="next" aria-label="Siguiente"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M12 3v10M3 3l7 5-7 5z"/></svg></button>

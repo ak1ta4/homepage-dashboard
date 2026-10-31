@@ -25,7 +25,7 @@ Página de inicio / nueva pestaña para Windows, a pantalla completa y en modo o
 | Sistema: host, uptime, IP local, procesos | `psutil` |
 | Now playing con anterior / pausa / siguiente | controles multimedia de Windows (SMTC); si Spotify no publica ahí, se lee el título de su ventana y se controla con las teclas multimedia |
 | Clima (por defecto Madrid, configurable) | [Open‑Meteo](https://open-meteo.com) (sin API key) |
-| Tareas: añadir, completar, editar (botón de lápiz o doble clic), limpiar hechas | `data.json` vía el agente |
+| Tareas: añadir, completar, editar (botón de lápiz o doble clic), reordenar arrastrando (o con `Alt+↑/↓`), fecha con aviso, limpiar hechas | `data.json` vía el agente; avisos lanzados por el agente: una ventanita propia con sonido, abajo a la derecha, hasta que hagas clic |
 | Marcadores numerados con atajos `1`–`9` y `0` (10.º), reordenables arrastrando (o con `Alt+↑/↓`) | `data.json` vía el agente |
 
 Atajos (fuera de un campo de texto): `/` buscar · `T` nueva tarea · `1`–`9`, `0` abrir marcador · `F` pantalla completa · `Esc` salir del campo.
